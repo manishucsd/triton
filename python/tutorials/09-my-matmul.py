@@ -212,42 +212,61 @@ class TritonMatmul():
     print(f"TFLOP/s : {tflops}")
   
 # Create a matmul problem, description, and tile configuration
-problem_shape = ProblemShape(3456, 1024, 2048)
-matmul_description_f16 = MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor,
+problem_shape = ProblemShape(3456, 4096, 8192)
+
+### FP16 Tensor Cores
+#matmul_description_f16 = MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor,
+#                                       dtype_b=torch.float16, layout_b=MatrixLayout.RowMajor,
+#                                       dtype_c=torch.float16, layout_c=MatrixLayout.RowMajor,
+#                                       dtype_d=torch.float16, 
+#                                       dtype_accumulator=torch.float16)
+#
+#tile_config_f16 = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=32, kNumStages=5)
+#
+#triton_matmul_f16 = TritonMatmul(matmul_description_f16, problem_shape, tile_config_f16)
+#
+## Verify and profile triton matmul
+#if(triton_matmul_f16.verify()):
+#  print("triton_matmul_f16 matmul verified")
+#else:
+#  print("triton_matmul_f16 matmul failed verification")
+#
+#triton_matmul_f16.profile()
+#
+### FP32 Tensor Cores
+#matmul_description_f32 = MatmulDescription(dtype_a=torch.float32, layout_a=MatrixLayout.RowMajor,
+#                                       dtype_b=torch.float32, layout_b=MatrixLayout.RowMajor,
+#                                       dtype_c=torch.float32, layout_c=MatrixLayout.RowMajor,
+#                                       dtype_d=torch.float32, 
+#                                       dtype_accumulator=torch.float32)
+#tile_config_f32 = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=16, kNumStages=3)
+#
+## Create a triton matmul for f32 Tensor Cores 
+#triton_matmul_f32 = TritonMatmul(matmul_description_f32, problem_shape, tile_config_f32)
+#
+## Verify and profile triton matmul
+#if(triton_matmul_f32.verify()):
+#  print("triton_matmul_f32 matmul verified")
+#else:
+#  print("triton_matmul_f32 matmul failed verification")
+#
+#triton_matmul_f32.profile()
+
+## Mixed-precision Tensor Cores
+matmul_description_mixed_precision = MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor,
                                        dtype_b=torch.float16, layout_b=MatrixLayout.RowMajor,
                                        dtype_c=torch.float16, layout_c=MatrixLayout.RowMajor,
                                        dtype_d=torch.float16, 
-                                       dtype_accumulator=torch.float16)
-tile_config_f16 = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=32, kNumStages=5)
-
-
-matmul_description_f32 = MatmulDescription(dtype_a=torch.float32, layout_a=MatrixLayout.RowMajor,
-                                       dtype_b=torch.float32, layout_b=MatrixLayout.RowMajor,
-                                       dtype_c=torch.float32, layout_c=MatrixLayout.RowMajor,
-                                       dtype_d=torch.float32, 
                                        dtype_accumulator=torch.float32)
-tile_config_f32 = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=16, kNumStages=3)
+tile_config_mixed_precision = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=32, kNumStages=5)
 
-# Create a triton matmul for f16 Tensor Cores 
-triton_matmul_f16 = TritonMatmul(matmul_description_f16, problem_shape, tile_config_f16)
+# Create a triton matmul for mixed-precision Tensor Cores 
+triton_matmul_mixed_precision_f16_f32 = TritonMatmul(matmul_description_mixed_precision, problem_shape, tile_config_mixed_precision)
 
-# Verify triton matmul
-if(triton_matmul_f16.verify()):
-  print("triton_matmul_f16 matmul verified")
-else:
-  print("triton_matmul_f16 matmul failed verification")
-
-# Profile triton matmul
-triton_matmul_f16.profile()
-
-# Create a triton matmul for f32 Tensor Cores 
-triton_matmul_f32 = TritonMatmul(matmul_description_f32, problem_shape, tile_config_f32)
-
-# Verify triton matmul
-if(triton_matmul_f32.verify()):
+# Verify and profile triton matmul
+if(triton_matmul_mixed_precision_f16_f32.verify()):
   print("triton_matmul_f32 matmul verified")
 else:
   print("triton_matmul_f32 matmul failed verification")
 
-# Profile triton matmul
-triton_matmul_f32.profile()
+triton_matmul_mixed_precision_f16_f32.profile()
