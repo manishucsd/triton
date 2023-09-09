@@ -4,6 +4,8 @@ import enum, re
 from enum import auto
 
 import torch
+from torch.testing import assert_close
+
 import triton
 import triton.language as tl
 
