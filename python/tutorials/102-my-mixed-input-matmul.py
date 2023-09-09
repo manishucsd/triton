@@ -21,7 +21,12 @@ class ProblemShape():
   def __init__(self, m, n, k) -> None:
     self.m = m
     self.n = n
-    self.k = k  
+    self.k = k
+
+  def print(self) -> None:
+    """Print the problem shape"""
+    print("Problem shape")
+    print("  M = %s, N = %s, K = %s" % (self.m, self.n, self.k))
 
 class Params():
   """Matmul tensor/matrix parameters"""
@@ -54,6 +59,12 @@ class MatmulDescription():
     self.dtype_d = dtype_d
     self.dtype_accumulator = dtype_accumulator
     pass
+  
+  def print(self):
+    """Print the matmul description"""
+    print("GEMM description")
+    print("  DataType : a_type = %s, b_type = %s,  accumulator_type = %s, c_type = %s" % (self.dtype_a, self.dtype_b, self.dtype_accumulator, self.dtype_c))
+    print("  Layout   : a_layout = %s, b_layout = %s, c_layout = %s" % (self.layout_a, self.layout_b, self.layout_c))
 
 class TileConfiguration():
   """Kernel tile configuration (Performance)"""
@@ -67,6 +78,12 @@ class TileConfiguration():
     self.kCtaTileN = kCtaTileN
     self.kCtaTileK = kCtaTileK
     self.kNumStages = kNumStages
+
+  def print(self) -> None:
+    """Print the tile configuration"""
+    print("Tile configuration")
+    print("  TileM x TileN x TileK (%s x %s x %s), NumStages (%s)" \
+          % (self.kCtaTileM, self.kCtaTileN, self.kCtaTileK, self.kNumStages))
 
 #@triton.autotune(
 #    configs=[
@@ -120,9 +137,10 @@ def matmul_kernel(tensor_a, tensor_b, tensor_c, tensor_d,
     b_tile = tl.load(b_block_ptrs, 
                      mask=element_offsets_k[:, None] < problem_shape_k - gemm_k, 
                      other=0.0)
+    b_tile_upcast = b_tile.to(tensor_a.dtype.element_ty)
     
     # Mma
-    accumulator += tl.dot(a_tile, b_tile, out_dtype=dtype_accumulator) 
+    accumulator += tl.dot(a_tile, b_tile_upcast, out_dtype=dtype_accumulator) 
 
     # Advance A and B pointers
     a_block_ptrs += kCtaTileK * stride_ak
@@ -150,6 +168,10 @@ class TritonMatmul():
     self.grid_shape = self.get_grid_shape()
     self.params = self.get_matmul_parameters() 
 
+    # Profiling data
+    self.ms = None
+    self.tflops = None
+
   def get_grid_shape(self) -> Any:
     """Compute the grid shape"""
     return (triton.cdiv(self.problem_shape.m, self.tile_config.kCtaTileM) * 
@@ -157,13 +179,16 @@ class TritonMatmul():
   
   def initialize_torch_tensor(self, num_rows, num_cols, dtype, layout) -> torch.Tensor:
     """Initialize a torch tensor"""
-    int_valued_tensor = torch.randint(-2, 3, (num_rows, num_cols), dtype=torch.int32, device="cuda")
+    int_valued_tensor = torch.randint(-1, 2, (num_rows, num_cols), dtype=torch.int32, device="cuda")
     tensor = int_valued_tensor.to(dtype=dtype)
+    """
     if layout == MatrixLayout.ColumnMajor:
       return tensor.t()
     else:
       return tensor
-    
+    """
+    return tensor
+  
   def get_flops(self) -> int:
     """Compute the number of flops"""
     return self.problem_shape.m * self.problem_shape.n * self.problem_shape.k * 2
@@ -202,79 +227,66 @@ class TritonMatmul():
   def verify(self):
     """Verify the result against torch.matmul"""
     d_triton = self()
-    d_torch_ref = torch.matmul(self.params.tensor_a, self.params.tensor_b)
-    return torch.equal(d_triton, d_torch_ref)
+    d_torch_ref = torch.matmul(self.params.tensor_a, self.params.tensor_b.to(self.matmul_description.dtype_a))
+    passed = torch.equal(d_triton, d_torch_ref)
+    if not passed:
+      print("d_triton: ", d_triton)
+      print("d_torch_ref: ", d_torch_ref)
+    return passed
   
 
   def profile(self):
     """Profile the kernel"""
-    ms = round(triton.testing.do_bench(lambda: self(), warmup=10, rep=100), 4)
-    tflops = int(self.get_flops() / (ms * 1e9))
-    print(f"Runtime : {ms} ms")
-    print(f"TFLOP/s : {tflops}")
+    self.ms = round(triton.testing.do_bench(lambda: self(), warmup=10, rep=100), 4)
+    self.tflops = int(self.get_flops() / (self.ms * 1e9))
+    self.print_profile()
+
+  def print_profile(self):
+    """Print the profile"""
+    print("----------------------------------------")
+    self.problem_shape.print()
+    self.matmul_description.print()
+    self.tile_config.print()
+    print("Performance on NVIDIA A100-SXM4-40GB")
+    print("  Runtime: %s ms" % self.ms)
+    print("  TFLOPS: %s" % self.tflops)
   
 # Create a matmul problem, description, and tile configuration
+# problem_shape = ProblemShape(128, 256, 64)
 problem_shape = ProblemShape(3456, 4096, 8192)
 
 ##################################################################################################
-###                          F16 <= F16 * F16 + F16 (F16 Tensor Cores)
+###                          F32 <= F16 * I8 + F32 (Mixed-input Tensor Cores)
 ##################################################################################################
-#matmul_description_f16 = MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor,
-#                                           dtype_b=torch.float16, layout_b=MatrixLayout.RowMajor,
-#                                           dtype_c=torch.float16, layout_c=MatrixLayout.RowMajor,
-#                                           dtype_d=torch.float16, 
-#                                           dtype_accumulator=torch.float16)
-#
-#tile_config_f16 = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=32, kNumStages=5)
-#
-#triton_matmul_f16 = TritonMatmul(matmul_description_f16, problem_shape, tile_config_f16)
-#
-## Verify and profile triton matmul
-#if(triton_matmul_f16.verify()):
-#  print("triton_matmul_f16 matmul verified")
-#else:
-#  print("triton_matmul_f16 matmul failed verification")
-#
-#triton_matmul_f16.profile()
-
-##################################################################################################
-###                          F32 <= F32 * F32 + F32 (F32 Tensor Cores)
-##################################################################################################
-#matmul_description_f32 = MatmulDescription(dtype_a=torch.float32, layout_a=MatrixLayout.RowMajor,
-#                                           dtype_b=torch.float32, layout_b=MatrixLayout.RowMajor,
-#                                           dtype_c=torch.float32, layout_c=MatrixLayout.RowMajor,
-#                                           dtype_d=torch.float32, 
-#                                           dtype_accumulator=torch.float32)
-#tile_config_f32 = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=16, kNumStages=3)
-#
-## Create a triton matmul for f32 Tensor Cores 
-#triton_matmul_f32 = TritonMatmul(matmul_description_f32, problem_shape, tile_config_f32)
-#
-## Verify and profile triton matmul
-#if(triton_matmul_f32.verify()):
-#  print("triton_matmul_f32 matmul verified")
-#else:
-#  print("triton_matmul_f32 matmul failed verification")
-#
-#triton_matmul_f32.profile()
-
-##################################################################################################
-###                          F16 <= F16 * F16 + F32 (Mixed-precision Tensor Cores)
-##################################################################################################
-matmul_description_mixed_precision = MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor,
-                                                       dtype_b=torch.float16, layout_b=MatrixLayout.RowMajor,
-                                                       dtype_c=torch.float16, layout_c=MatrixLayout.RowMajor,
-                                                       dtype_d=torch.float16, 
-                                                       dtype_accumulator=torch.float32)
-tile_config_mixed_precision = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=32, kNumStages=5)
+matmul_description_mixed_input_f16_i8 = MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor, 
+                                                   dtype_b=torch.int8, layout_b=MatrixLayout.ColumnMajor,
+                                                   dtype_c=torch.float32, layout_c=MatrixLayout.RowMajor,
+                                                   dtype_d=torch.float32, 
+                                                   dtype_accumulator=torch.float32)
+tile_config_mixed_input = TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=64, kNumStages=4)
 
 # Create a triton matmul for mixed-precision Tensor Cores 
-triton_matmul_mixed_precision_f16_f32 = TritonMatmul(matmul_description_mixed_precision, problem_shape, tile_config_mixed_precision)
+triton_matmul_mixed_input_f16_i8 = TritonMatmul(matmul_description_mixed_input_f16_i8, problem_shape, tile_config_mixed_input)
 
 # Verify and profile triton matmul
-if(triton_matmul_mixed_precision_f16_f32.verify()):
-  print("triton_matmul_f32 matmul verified")
+if(triton_matmul_mixed_input_f16_i8.verify()):
+  print("triton_matmul_mixed_input_f16_i8 matmul verified")
 else:
-  print("triton_matmul_f32 matmul failed verification")
+  print("triton_matmul_mixed_input_f16_i8 matmul failed verification")
 
-#triton_matmul_mixed_precision_f16_f32.profile()
+triton_matmul_mixed_input_f16_i8.profile()
+
+
+##################################################################################################
+###                          F32 <= BF16 * I8 + F32 (Mixed-input Tensor Cores)
+##################################################################################################
+matmul_description_mixed_input_bf16_i8 = MatmulDescription(dtype_a=torch.bfloat16, layout_a=MatrixLayout.RowMajor,
+                                                   dtype_b=torch.int8, layout_b=MatrixLayout.ColumnMajor,
+                                                   dtype_c=torch.float32, layout_c=MatrixLayout.RowMajor,
+                                                   dtype_d=torch.float32, 
+                                                   dtype_accumulator=torch.float32)
+
+# Create a triton matmul for mixed-precision Tensor Cores 
+triton_matmul_mixed_input_bf16_i8 = TritonMatmul(matmul_description_mixed_input_bf16_i8, problem_shape, tile_config_mixed_input)
+
+triton_matmul_mixed_input_bf16_i8.profile()
