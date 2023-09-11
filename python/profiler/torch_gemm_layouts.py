@@ -8,7 +8,7 @@ print("tensor_a.shape: ", tensor_a.shape)
 print("tensor_a.stride: ", tensor_a.stride())
 print("tensor_a: ", tensor_a)
 print("tensor_a.dtype: ", tensor_a.dtype)
-print("tensor_a dtype size in number of bits: ", tensor_a.element_size())
+print("tensor_a dtype size in number of bits: ", tensor_a.element_size() * 8)
 print("tensor_a.layout: ", tensor_a.layout)
 
 
@@ -16,6 +16,9 @@ print("tensor_a.layout: ", tensor_a.layout)
 print("tensor_b.shape: ", tensor_b.shape)
 print("tensor_b.stride: ", tensor_b.stride())
 print("tensor_b: ", tensor_b)
+print("tensor_b.dtype: ", tensor_b.dtype)
+print("tensor_b dtype size in number of bits: ", tensor_b.element_size() * 8)
+print("tensor_b.layout: ", tensor_b.layout)
 
 # matmul tensor_a and tensor_b
 tensor_c = torch.matmul(tensor_a, tensor_b)

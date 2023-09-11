@@ -60,8 +60,8 @@ class MatmulDescription():
   def print(self):
     """Print the matmul description"""
     print("GEMM description")
-    print("  DataType : a_type = %s, b_type = %s,  accumulator_type = %s, c_type = %s" % (self.dtype_a, self.dtype_b, self.dtype_accumulator, self.dtype_c))
-    print("  Layout   : a_layout = %s, b_layout = %s, c_layout = %s" % (self.layout_a, self.layout_b, self.layout_c))
+    print("  DataType : %s <= %s * %s + %s" % (self.dtype_c, self.dtype_a, self.dtype_b, self.dtype_accumulator))
+    print("  Layout   : %s <= %s * %s" % (self.layout_c, self.layout_a, self.layout_b))
 
 class TileConfiguration():
   """Kernel tile configuration (Performance)"""
