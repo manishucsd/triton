@@ -7,13 +7,13 @@ import torch
 
 # Matmul problem shape to fill 108 SMs on A100 and test instruction mix and scheduling 
 # (decoupling auto-tuning)
-problem_shape = ProblemShape(3456, 4096, 8192)
-# problem_shape = ProblemShape(128, 128, 64)
+problem_shape = ProblemShape(3456, 4096, 2048)
+#problem_shape = ProblemShape(128, 256, 512)
 
 
 # Create a list of tile configurations 
 tile_configurations = []
-tile_configurations.append(TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=64, kNumStages=4))
+tile_configurations.append(TileConfiguration(kCtaTileM=128, kCtaTileN=128, kCtaTileK=64, kNumStages=3))
 
 # Create a list of matmul descriptions for F16 Tensor Cores
 matmul_description = []

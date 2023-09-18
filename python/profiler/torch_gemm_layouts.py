@@ -11,6 +11,14 @@ print("tensor_a.dtype: ", tensor_a.dtype)
 print("tensor_a dtype size in number of bits: ", tensor_a.element_size() * 8)
 print("tensor_a.layout: ", tensor_a.layout)
 
+# Print tensor a details
+print("tensor_a.T.shape: ", tensor_a.T.shape)
+print("tensor_a.stride: ", tensor_a.T.stride())
+print("tensor_a: ", tensor_a.T)
+print("tensor_a.dtype: ", tensor_a.T.dtype)
+print("tensor_a dtype size in number of bits: ", tensor_a.T.element_size() * 8)
+print("tensor_a.layout: ", tensor_a.T.layout)
+
 
 # Print tensor b details
 print("tensor_b.shape: ", tensor_b.shape)

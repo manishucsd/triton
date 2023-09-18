@@ -31,12 +31,13 @@ class GemmProfiler():
   
   def initialize_torch_tensor(self, num_rows, num_cols, dtype, layout) -> torch.Tensor:
     """Initialize a torch 2D tensor of rows x cols with integer random values centered around zero"""
-    int_valued_tensor = torch.randint(-1, 2, (num_rows, num_cols), dtype=torch.int32, device="cuda")
-    tensor = int_valued_tensor.to(dtype=dtype)
-    if layout == MatrixLayout.ColumnMajor:
-      return tensor.t()
-    else:
-      return tensor
+    # Generate a random tensor with values in the range [-2, 2] with RowMajor layout in GPU memory
+    matrix_shape = (num_rows, num_cols) if layout == MatrixLayout.RowMajor else (num_cols, num_rows)
+    tensor_integer_valued_init = torch.randint(low=-2, high=3, size=matrix_shape, device="cuda")
+    tensor = tensor_integer_valued_init.to(dtype=dtype)
+    # Transpose the tensor if the layout is ColumnMajor
+    return tensor if layout == MatrixLayout.RowMajor else tensor.T
+
 
   def get_flops(self) -> int:
     """Compute the number of flops"""
@@ -44,6 +45,7 @@ class GemmProfiler():
   
   def get_matmul_parameters(self) -> Params:
     """Allocate/initialize torch tensors and returns in a `params` object"""
+    torch.manual_seed(0)
     tensor_a = self.initialize_torch_tensor(self.problem_shape.m, self.problem_shape.k, 
                                             self.matmul_description.dtype_a, 
                                             self.matmul_description.layout_a)
@@ -79,40 +81,47 @@ class GemmProfiler():
     # Run triton gemm kernel
     d_triton = self()
 
-    # Run torch.matmul reference gemm kernel
-    torch_tensor_a = self.params.tensor_a if self.matmul_description.layout_a == MatrixLayout.RowMajor else self.params.tensor_a.t()
-    torch_tensor_b = self.params.tensor_b if self.matmul_description.layout_b == MatrixLayout.RowMajor else self.params.tensor_b.t()
+    # Find the wider of the two operands dtypes
+    dot_operand_dtype = self.matmul_description.dtype_a \
+      if self.params.tensor_a.element_size() > self.params.tensor_b.element_size() \
+        else self.matmul_description.dtype_b
 
-    # Math the input data type to torch.matmul to the wider type if dtype_a and dtype_b are different
-    if self.params.tensor_a.dtype != self.params.tensor_b.dtype:
-      dot_operand_dtype = self.matmul_description.dtype_a \
-        if self.params.tensor_a.element_size() > self.params.tensor_b.element_size() \
-          else self.matmul_description.dtype_b
+    # Operands for reference torch.matmul
+    torch_tensor_a = self.params.tensor_a
+    torch_tensor_b = self.params.tensor_b
+
+    # Cast the operands to the wider dtype if dtype_a != dtype_b
+    if self.matmul_description.dtype_a != dot_operand_dtype:
       torch_tensor_a = torch_tensor_a.to(dtype=dot_operand_dtype)
+    if self.matmul_description.dtype_b != dot_operand_dtype:
       torch_tensor_b = torch_tensor_b.to(dtype=dot_operand_dtype)
 
+    # Run torch.matmul
     d_torch_ref = torch.matmul(torch_tensor_a, torch_tensor_b)
 
     # Verify the result
     self.passed = torch.equal(d_triton, d_torch_ref)
     self.verification = "Passed" if self.passed else "Failed"
 
-    '''
     # Print the result if verification failed
     if not self.passed:
       # print tensor_a shape and stride
+      print("tensor_a: ", self.params.tensor_a)
       print("tensor_a.shape: ", self.params.tensor_a.shape)
       print("tensor_a.stride: ", self.params.tensor_a.stride())
+
       # print tensor_b shape and stride
+      print("tensor_b: ", self.params.tensor_b)
       print("tensor_b.shape: ", self.params.tensor_b.shape)
       print("tensor_b.stride: ", self.params.tensor_b.stride())
 
-      print("d_triton.shape: ", d_triton.shape)
       print("d_triton: ", d_triton)
+      print("d_triton.shape: ", d_triton.shape)
+      print("d_triton.stride: ", d_triton.stride())
 
       print("d_torch_ref: ", d_torch_ref)
       print("d_torch_ref.shape: ", d_torch_ref.shape)
-    '''
+      print("d_torch_ref.stride: ", d_torch_ref.stride())
 
     return self.passed
 
@@ -123,7 +132,7 @@ class GemmProfiler():
 
   def performance_report(self):
     """Print the Triton kernel performance report"""
-    print("----------------------------------------")
+    print("=================== Performance Report ===================")
     self.problem_shape.print()
     self.matmul_description.print()
     self.tile_config.print()
@@ -131,3 +140,4 @@ class GemmProfiler():
     print("  Verification: %s" % self.verification)
     print("  Runtime: %s ms" % self.ms)
     print("  TFLOPS: %s" % self.tflops)
+    print("----------------------------------------------------------")

@@ -6,6 +6,8 @@ import torch
 # Matmul problem shape to fill 108 SMs on A100 and test instruction mix and scheduling 
 # (decoupling auto-tuning)
 problem_shape = ProblemShape(3456, 4096, 8192)
+#problem_shape = ProblemShape(128, 256, 512)
+
 
 # Create a list of tile configurations 
 tile_configurations = []
@@ -16,6 +18,7 @@ matmul_description = []
 ##################################################################################################
 ###                          F16 <= F16 * F16 + F16 (F16 Tensor Cores)
 ##################################################################################################
+
 matmul_description.append(MatmulDescription(dtype_a=torch.float16, layout_a=MatrixLayout.RowMajor,
                                             dtype_b=torch.float16, layout_b=MatrixLayout.RowMajor,
                                             dtype_c=torch.float16, layout_c=MatrixLayout.RowMajor,
@@ -39,6 +42,16 @@ matmul_description.append(MatmulDescription(dtype_a=torch.float16, layout_a=Matr
                                             dtype_c=torch.float16, layout_c=MatrixLayout.RowMajor,
                                             dtype_d=torch.float16, 
                                             dtype_accumulator=torch.float16))
+
+##################################################################################################
+###                          F32 <= BF16 * BF16 + F32 
+##################################################################################################
+# RowMajor * ColumnMajor / TN GEMM with BF16 operand A and I8 operand B
+matmul_description.append(MatmulDescription(dtype_a=torch.bfloat16, layout_a=MatrixLayout.RowMajor,
+                                            dtype_b=torch.bfloat16, layout_b=MatrixLayout.ColumnMajor,
+                                            dtype_c=torch.float32, layout_c=MatrixLayout.RowMajor,
+                                            dtype_d=torch.float32, 
+                                            dtype_accumulator=torch.float32))
 
 for tile_config in tile_configurations:
   for description in matmul_description:
@@ -46,4 +59,3 @@ for tile_config in tile_configurations:
     triton_gemm.verify()
     triton_gemm.profile()
     triton_gemm.performance_report()
-
