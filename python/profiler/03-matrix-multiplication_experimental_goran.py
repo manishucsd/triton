@@ -151,14 +151,15 @@ You will specifically learn about:
 # ------------
 
 import argparse
+
 import torch
 
 import triton
 import triton.language as tl
 
 parser = argparse.ArgumentParser(
-  prog="03-matrix-multiplication",
-  description="Matrix multiplication kernel via Triton")
+    prog="03-matrix-multiplication",
+    description="Matrix multiplication kernel via Triton")
 parser.add_argument('-c', '--config', default="FNFN",
                     help="configuration of matmul data types and transposition options")
 parser.add_argument('-s', '--stype', default="int8",
@@ -167,8 +168,10 @@ args = parser.parse_args()
 
 print("config:", args.config, "stype:", args.stype)
 
+
 def f8_to_f16(x):
     assert x.is_contiguous(), "Kernel only works for contiguous tensors"
+
     @triton.jit
     def kernel(Y, X, N, BLOCK_SIZE: tl.constexpr):
         pid = tl.program_id(0)
@@ -182,8 +185,10 @@ def f8_to_f16(x):
     kernel[grid](ret, triton.reinterpret(x, tl.float8e5), ret.numel(), BLOCK_SIZE=1024)
     return ret
 
+
 def f16_to_f8(x):
     assert x.is_contiguous(), "Kernel only works for contiguous tensors"
+
     @triton.jit
     def kernel(Y, X, N, BLOCK_SIZE: tl.constexpr):
         pid = tl.program_id(0)
@@ -197,6 +202,7 @@ def f16_to_f8(x):
     kernel[grid](triton.reinterpret(ret, tl.float8e5), x, x.numel(), BLOCK_SIZE=1024)
     return ret
 
+
 def transform_impl(c, x):
     t = x
     if c[0] == "S":
@@ -207,17 +213,26 @@ def transform_impl(c, x):
         else:
             raise Exception("unexpected --stype value")
     return t.T if c[1] == "T" else t
+
+
 def transform_lhs(x):
     return transform_impl(args.config[0:2], x)
+
+
 def transform_rhs(x):
     return transform_impl(args.config[2:4], x)
+
 
 def maybe_upcast_impl(p, x):
     if not x.is_contiguous():
         return maybe_upcast_impl(p, x.T).T
-    return f8_to_f16(x) if p == "S" and args.stype == "float8" else x.to(torch.float16)
+    return f8_to_f16(x) if p == "S" and args.stype == "float8" else x.to(torch.bfloat16)
+
+
 def maybe_upcast_lhs(x):
     return maybe_upcast_impl(args.config[0], x)
+
+
 def maybe_upcast_rhs(x):
     return maybe_upcast_impl(args.config[2], x)
 
@@ -226,6 +241,8 @@ def maybe_upcast_rhs(x):
 #       meta-parameters (e.g., `BLOCK_SIZE_M`) and compilation options (e.g., `num_warps`) to try
 #   - An auto-tuning *key* whose change in values will trigger evaluation of all the
 #       provided configs
+
+
 @triton.autotune(
     configs=[
         triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 64, 'GROUP_SIZE_M': 8}, num_stages=3, num_warps=8),
@@ -299,18 +316,18 @@ def matmul_kernel(
         # If it is out of bounds, set it to 0.
         a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0)
         if IS_LHS_FP8:
-          a = a.to(tl.float8e5, bitcast=True)
-        a = a.to(tl.float16)
+            a = a.to(tl.float8e5, bitcast=True)
+        a = a.to(tl.bfloat16)
         b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
         if IS_RHS_FP8:
-          b = b.to(tl.float8e5, bitcast=True)
-        b = b.to(tl.float16)
+            b = b.to(tl.float8e5, bitcast=True)
+        b = b.to(tl.bfloat16)
         # We accumulate along the K dimension.
         accumulator += tl.dot(a, b)
         # Advance the ptrs to the next K block.
         a_ptrs += BLOCK_SIZE_K * stride_ak
         b_ptrs += BLOCK_SIZE_K * stride_bk
-    c = accumulator.to(tl.float16)
+    c = accumulator.to(tl.bfloat16)
 
     # -----------------------------------------------------------
     # Write back the block of the output matrix C with masks.
@@ -332,7 +349,7 @@ def matmul(a, b, activation=""):
     M, K = a.shape
     K, N = b.shape
     # Allocates output.
-    c = torch.empty((M, N), device=a.device, dtype=torch.float16)
+    c = torch.empty((M, N), device=a.device, dtype=torch.bfloat16)
     # 1D launch kernel where each block gets its own program.
     grid = lambda META: (
         triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']),
@@ -356,22 +373,24 @@ def matmul(a, b, activation=""):
 # We can test our custom matrix multiplication operation against a native torch implementation (i.e., cuBLAS).
 
 torch.manual_seed(0)
-M = N = K = 512
-a = torch.randn((M, K), device='cuda', dtype=torch.float16)
+# M = N = K = 4096
+M, N, K = 3456, 4096, 8 * 1024
+a = torch.randn((M, K) if args.config[1] == 'N' else (K, M), device='cuda', dtype=torch.bfloat16) + 2
 # print(f"before_lhs={a}")
 a = transform_lhs(a)
 # print(f"after_lhs={maybe_upcast_lhs(a)}")
-b = torch.randn((K, N), device='cuda', dtype=torch.float16)
+b = torch.randn((K, N) if args.config[3] == 'N' else (N, K), device='cuda', dtype=torch.bfloat16) + 2
 # print(f"before_rhs={b}")
 b = transform_rhs(b)
 # print(f"after_rhs={maybe_upcast_rhs(b)}")
 triton_output = matmul(a, b)
 torch_output = torch.matmul(maybe_upcast_lhs(a), maybe_upcast_rhs(b))
-if torch.allclose(triton_output, torch_output, atol=1e-1, rtol=0):
+if torch.allclose(triton_output, torch_output, atol=0, rtol=0):
     print("✅ Triton and Torch match")
 else:
     print(f"triton_output={triton_output}")
     print(f"torch_output={torch_output}")
+    print((triton_output - torch_output).flatten().abs().sort(descending=True))
     print("❌ Triton and Torch differ")
 
 # %%
@@ -388,9 +407,7 @@ else:
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=['M', 'N', 'K'],  # Argument names to use as an x-axis for the plot
-        x_vals=[
-            128 * i for i in range(32, 33)
-        ],  # Different possible values for `x_name`
+        x_vals=[[3456, 4096, 8192]],  # Different possible values for `x_name`
         line_arg='provider',  # Argument name whose value corresponds to a different line in the plot
         # Possible values for `line_arg`
         line_vals=['cublas', 'triton'],
@@ -404,8 +421,8 @@ else:
     )
 )
 def benchmark(M, N, K, provider):
-    a = transform_lhs(torch.randn((M, K), device='cuda', dtype=torch.float16))
-    b = transform_rhs(torch.randn((K, N), device='cuda', dtype=torch.float16))
+    a = transform_lhs(torch.randn((M, K) if args.config[1] == 'N' else (K, M), device='cuda', dtype=torch.bfloat16))
+    b = transform_rhs(torch.randn((K, N) if args.config[3] == 'N' else (N, K), device='cuda', dtype=torch.bfloat16))
     quantiles = [0.5, 0.2, 0.8]
     if provider == 'cublas':
         fn = lambda: torch.matmul(maybe_upcast_lhs(a), maybe_upcast_rhs(b))
