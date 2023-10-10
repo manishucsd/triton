@@ -408,7 +408,7 @@ else:
 )
 def benchmark(M, N, K, provider):
     a = generate_lhs(M, K)
-    b = generate_lhs(K, N)
+    b = generate_rhs(K, N)
     quantiles = [0.5, 0.2, 0.8]
     if provider == 'cublas':
         fn = lambda: torch.matmul(maybe_upcast_lhs(a), maybe_upcast_rhs(b))
